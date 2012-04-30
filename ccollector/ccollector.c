@@ -43,8 +43,16 @@ typedef struct keyval_s {
 typedef struct data_s {
   keyval_t*       keys;
   pthread_mutex_t mutex;
-  pthread_t       thread;
 } data_t;
+
+
+// Data structure used as argument for the process threads
+typedef struct thread_data_s {
+  data_t* what;
+  data_t* into;
+  char    ws;
+  int     timeout;
+} thread_data_t;
 
 
 data_t seconds;
@@ -89,77 +97,56 @@ keyval_t* addkey(data_t* data, char* name, int dup) {
 }
 
 
-void process(data_t* what, data_t* into, char ws) {
-  pthread_mutex_lock(&what->mutex);
+void* process(void* arg) {
+  thread_data_t* data = (thread_data_t*)arg;
 
-  if (into) {
-    pthread_mutex_lock(&into->mutex);
-  }
+  for (;;) {
+    sleep(data->timeout);
 
-  keyval_t* k = what->keys;
+    pthread_mutex_lock(&data->what->mutex);
 
-  while (k != 0) {
-    double value = 0;
-
-    if (k->samples > 0) {
-      value = k->data / k->samples;
+    if (data->into) {
+      pthread_mutex_lock(&data->into->mutex);
     }
 
-    k->data = k->samples = 0;
+    keyval_t* k = data->what->keys;
 
-    char command[1024];
+    while (k != 0) {
+      double value = 0;
 
-    snprintf(command, 1024, "RPUSH %s:%c %.2f", k->name, ws, value);
-    freeReplyObject(redisCommand(redis, command));
-
-    snprintf(command, 1024, "LTRIM %s:%c -288 -1", k->name, ws);
-    freeReplyObject(redisCommand(redis, command));
-
-    if (into != 0) {
-      keyval_t* ki = getkey(into, k->name);
-
-      if (ki == 0) {
-        ki = addkey(into, k->name, 0);
+      if (k->samples > 0) {
+        value = k->data / k->samples;
       }
 
-      ki->data += value;
-      ++ki->samples;
+      k->data = k->samples = 0;
+
+      char command[1024];
+
+      snprintf(command, 1024, "RPUSH %s:%c %.2f", k->name, data->ws, value);
+      freeReplyObject(redisCommand(redis, command));
+
+      snprintf(command, 1024, "LTRIM %s:%c -288 -1", k->name, data->ws);
+      freeReplyObject(redisCommand(redis, command));
+
+      if (data->into != 0) {
+        keyval_t* ki = getkey(data->into, k->name);
+
+        if (ki == 0) {
+          ki = addkey(data->into, k->name, 0);
+        }
+
+        ki->data += value;
+        ++ki->samples;
+      }
+
+      k = k->next;
     }
 
-    k = k->next;
-  }
+    pthread_mutex_unlock(&data->what->mutex);
 
-  pthread_mutex_unlock(&what->mutex);
-
-  if (into) {
-    pthread_mutex_unlock(&into->mutex);
-  }
-}
-
-
-void* process_seconds(void* id) {
-  for (;;) {
-    sleep(5);
-
-    process(&seconds, &minutes, 's');
-  }
-}
-
-
-void* process_minutes(void* id) {
-  for (;;) {
-    sleep(5 * 60);
-
-    process(&minutes, &hours, 'm');
-  }
-}
-
-
-void* process_hours(void* id) {
-  for (;;) {
-    sleep(60 * 60);
-
-    process(&hours, 0, 'h');
+    if (data->into) {
+      pthread_mutex_unlock(&data->into->mutex);
+    }
   }
 }
 
@@ -218,6 +205,8 @@ int main() {
   int s, l;
   socklen_t slen = sizeof(si_other);
   char buf[BUFLEN + 1];
+  pthread_t seconds_thread, minutes_thread, hours_thread;
+
 
   if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
     printf("creating socket failed\n");
@@ -254,9 +243,15 @@ int main() {
   pthread_mutex_init(&hours.mutex  , 0);
 
 
-  pthread_create(&seconds.thread, 0, process_seconds, 0);
-  pthread_create(&minutes.thread, 0, process_minutes, 0);
-  pthread_create(&hours.thread  , 0, process_hours  , 0);
+  // It doesn't matter that these are local variables seeing as this function will never return.
+  thread_data_t seconds_data = {&seconds, &minutes, 's',       5};
+  thread_data_t minutes_data = {&minutes, &hours  , 'm',  5 * 60};
+  thread_data_t hours_data   = {&hours  , 0       , 'h', 60 * 60};
+
+
+  pthread_create(&seconds_thread, 0, process, &seconds_data);
+  pthread_create(&minutes_thread, 0, process, &minutes_data);
+  pthread_create(&hours_thread  , 0, process, &hours_data);
 
 
   for (;;) {
