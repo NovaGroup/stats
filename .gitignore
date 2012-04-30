@@ -1,6 +1,9 @@
-collector/node_modules
+nodecollector/node_modules
 redis.conf
 redis.rdb
 ccollector/ccollector
 cppcollector/cppcollector
 cppcollector/jsoncpp/
+gocollector/gocollector
+libuvcollector/libuvcollector
+libuvcollector/jsoncpp/

@@ -7,6 +7,7 @@
 #include <netinet/in.h> // sockaddr_in
 #include <stdlib.h> // strtod
 #include <string.h> // strstr
+#include <errno.h> // errno
 
 #include <pthread.h>
 
@@ -15,6 +16,7 @@
 #include "jsoncpp/include/json/json.h"
 
 
+// Default values
 #define CONFIG_PORT         9876
 #define CONFIG_REDIS_SOCKET "redis.sock"
 #define CONFIG_REDIS_IP     "127.0.0.1"
@@ -115,6 +117,7 @@ void* process_seconds(void* id) {
     process(&seconds, &minutes, 's');
   }
 
+  // Instruct the compilter that this code is unreachable.
   __builtin_unreachable();
 }
 
@@ -126,6 +129,7 @@ void* process_minutes(void* id) {
     process(&minutes, &hours, 'm');
   }
   
+  // Instruct the compilter that this code is unreachable.
   __builtin_unreachable();
 }
 
@@ -137,6 +141,7 @@ void* process_hours(void* id) {
     process(&hours, 0, 'h');
   }
 
+  // Instruct the compilter that this code is unreachable.
   __builtin_unreachable();
 }
 
@@ -238,7 +243,7 @@ int main() {
   si_me.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(s, (struct sockaddr*)&si_me, sizeof(si_me)) < 0) {
-    cout << "bind failed" << endl;
+    cout << "bind failed: " << strerror(errno) << endl;
     return 3;
   }
 
@@ -278,8 +283,7 @@ int main() {
     int len = strlen(buf);
     int stt = 0;
 
-    int i;
-    for (i = 0; i < len; ++i) {
+    for (int i = 0; i < len; ++i) {
       if (buf[i] == ',') {
         buf[i] = 0;
 
@@ -292,8 +296,6 @@ int main() {
     processkey(&buf[stt]);
   }
 
-  close(s);
-
-  return 0;
+  // This will never be reached
 }
 
