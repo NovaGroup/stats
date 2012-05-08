@@ -5,11 +5,12 @@
 #include <map>
 
 #include <netinet/in.h> // sockaddr_in
-#include <stdlib.h> // strtod
-#include <string.h> // strstr
-#include <errno.h> // errno
+#include <stdlib.h>     // strtod
+#include <string.h>     // strstr
+#include <errno.h>      // errno
 
-#include <pthread.h>
+#include <boost/thread.hpp>
+#include <boost/date_time.hpp>
 
 #include <hiredis/hiredis.h>
 
@@ -42,9 +43,8 @@ public:
 typedef map<string, counter> countermap;
 
 typedef struct timeframe {
-  countermap      counters;
-  pthread_mutex_t mutex;
-  pthread_t       thread;
+  countermap   counters;
+  boost::mutex mutex;
 } timeframe;
 
 
@@ -57,92 +57,62 @@ redisContext *redis;
 Json::Value config;
 
 
-void process(timeframe* what, timeframe* into, char ws) {
-  pthread_mutex_lock(&what->mutex);
+void process(timeframe* what, timeframe* into, char ws, int timeout) {
+  for (;;) {
+    boost::posix_time::seconds nextrun(timeout);
+    boost::this_thread::sleep(nextrun);
 
-  if (into) {
-    pthread_mutex_lock(&into->mutex);
-  }
+    // open a scope for our scoped mutex
+    {
+      boost::mutex::scoped_lock wl(what->mutex);
 
-  countermap::iterator i;
+      if (into != NULL) {
+        into->mutex.lock();
+      }
+      
+      countermap::iterator i;
 
-  for (i = what->counters.begin(); i != what->counters.end(); ++i) {
-    counter* c = &(*i).second;
+      for (i = what->counters.begin(); i != what->counters.end(); ++i) {
+        counter* c = &(*i).second;
 
-    double value = 0;
+        double value = 0;
 
-    if (c->samples > 0) {
-      value = c->data / c->samples;
-    }
+        if (c->samples > 0) {
+          value = c->data / c->samples;
+        }
 
-    c->data = c->samples = 0;
+        c->data = c->samples = 0;
 
-    char command[1024];
+        char command[1024];
 
-    snprintf(command, 1024, "RPUSH %s:%c %.2f", (*i).first.c_str(), ws, value);
-    freeReplyObject(redisCommand(redis, command));
+        snprintf(command, 1024, "RPUSH %s:%c %.2f", (*i).first.c_str(), ws, value);
+        freeReplyObject(redisCommand(redis, command));
 
-    snprintf(command, 1024, "LTRIM %s:%c -288 -1", (*i).first.c_str(), ws);
-    freeReplyObject(redisCommand(redis, command));
+        snprintf(command, 1024, "LTRIM %s:%c -288 -1", (*i).first.c_str(), ws);
+        freeReplyObject(redisCommand(redis, command));
 
-    if (into != NULL) {
-      counter* ic;
-      countermap::iterator ii = into->counters.find((*i).first);
+        if (into != NULL) {
+          counter* ic;
+          countermap::iterator ii = into->counters.find((*i).first);
 
-      if (ii == into->counters.end()) {
-        pair<countermap::iterator, bool> r = into->counters.insert(pair<string, counter>((*i).first, counter()));
+          if (ii == into->counters.end()) {
+            pair<countermap::iterator, bool> r = into->counters.insert(pair<string, counter>((*i).first, counter()));
 
-        ic = &(*r.first).second;
-      } else {
-        ic = &(*ii).second;
+            ic = &(*r.first).second;
+          } else {
+            ic = &(*ii).second;
+          }
+
+          ic->data += value;
+          ++ic->samples;
+        }
       }
 
-      ic->data += value;
-      ++ic->samples;
-    }
+      if (into != NULL) {
+        into->mutex.unlock();
+      }
+    } // close of the mutex scope
   }
-
-  pthread_mutex_unlock(&what->mutex);
-
-  if (into) {
-    pthread_mutex_unlock(&into->mutex);
-  }
-}
-
-
-void* process_seconds(void* id) {
-  for (;;) {
-    sleep(5);
-
-    process(&seconds, &minutes, 's');
-  }
-
-  // Instruct the compilter that this code is unreachable.
-  __builtin_unreachable();
-}
-
-
-void* process_minutes(void* id) {
-  for (;;) {
-    sleep(5 * 60);
-
-    process(&minutes, &hours, 'm');
-  }
-  
-  // Instruct the compilter that this code is unreachable.
-  __builtin_unreachable();
-}
-
-
-void* process_hours(void* id) {
-  for (;;) {
-    sleep(60 * 60);
-
-    process(&hours, 0, 'h');
-  }
-
-  // Instruct the compilter that this code is unreachable.
-  __builtin_unreachable();
 }
 
 
@@ -157,46 +127,46 @@ void processkey(char* buf) {
   *(val++) = 0;
 
 
-  pthread_mutex_lock(&seconds.mutex);
+  {
+    boost::mutex::scoped_lock sl(seconds.mutex);
 
-  counter* c;
-  countermap::iterator i = seconds.counters.find(buf);
+    counter* c;
+    countermap::iterator i = seconds.counters.find(buf);
 
-  if (i == seconds.counters.end()) {
-    cout << "new key: " << buf << endl;
+    if (i == seconds.counters.end()) {
+      cout << "new key: " << buf << endl;
 
-    pair<countermap::iterator, bool> r = seconds.counters.insert(pair<string, counter>(buf, counter()));
+      pair<countermap::iterator, bool> r = seconds.counters.insert(pair<string, counter>(buf, counter()));
 
-    c = &(*r.first).second;
-  } else {
-    c = &(*i).second;
-  }
+      c = &(*r.first).second;
+    } else {
+      c = &(*i).second;
+    }
 
-  char* sep    = strstr(val, "|");
-  double value = 0;
+    char* sep    = strstr(val, "|");
+    double value = 0;
 
-  if (sep != 0) {
-    *(sep++) = 0;
+    if (sep != 0) {
+      *(sep++) = 0;
 
-    value = strtod(val, 0);
+      value = strtod(val, 0);
 
-    if (*sep == 'c') {
-      if (c->samples != 5) {
-        c->samples = 5;
+      if (*sep == 'c') {
+        if (c->samples != 5) {
+          c->samples = 5;
+        }
+      } else {
+        cout << "invalid data type: [" << *sep << "]" << endl;
+        value = 0;
       }
     } else {
-      cout << "invalid data type: [" << *sep << "]" << endl;
-      value = 0;
+      value = strtod(val, 0);
+
+      ++c->samples;
     }
-  } else {
-    value = strtod(val, 0);
 
-    ++c->samples;
+    c->data += value;
   }
-
-  c->data += value;
-  
-  pthread_mutex_unlock(&seconds.mutex);
 }
 
 
@@ -260,14 +230,9 @@ int main() {
   }
 
 
-  pthread_mutex_init(&seconds.mutex, 0);
-  pthread_mutex_init(&minutes.mutex, 0);
-  pthread_mutex_init(&hours.mutex  , 0);
-
-
-  pthread_create(&seconds.thread, 0, process_seconds, 0);
-  pthread_create(&minutes.thread, 0, process_minutes, 0);
-  pthread_create(&hours.thread  , 0, process_hours  , 0);
+  boost::thread seconds_thread(process, &seconds, &minutes        , 's',       5);
+  boost::thread minutes_thread(process, &minutes, &hours          , 'm',  5 * 60);
+  boost::thread hours_thread  (process, &hours  , (timeframe*)NULL, 'h', 60 * 60); // Just passing NULL confuses the boost::thread template to much.
 
 
   for (;;) {
@@ -296,6 +261,6 @@ int main() {
     processkey(&buf[stt]);
   }
 
-  // This will never be reached
+  // This will never be reached so we don't have to .join() our threads.
 }
 
