@@ -1,7 +1,7 @@
 
 #include <stdio.h>  // fprintf
 #include <stdlib.h> // malloc
-#include <string.h> // strlen, strstr
+#include <string.h> // strlen, strchr
 
 #include <fstream>  // ifstream
 #include <map>
@@ -106,7 +106,7 @@ static void process_cb(uv_timer_t* handle, int status) {
 
 
 void processkey(char* buf) {
-  char* val = strstr(buf, ":");
+  char* val = strchr(buf, ':');
 
   if (val == 0) {
     fprintf(stderr, "%s:%d:%s() invalid data [%s]\n", __FILE__, __LINE__, __FUNCTION__, buf);
@@ -130,7 +130,7 @@ void processkey(char* buf) {
     c = &(*i).second;
   }
 
-  char* sep    = strstr(val, "|");
+  char* sep    = strchr(val, '|');
   double value = 0;
 
   if (sep != 0) {

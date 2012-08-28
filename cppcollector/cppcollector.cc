@@ -6,7 +6,7 @@
 
 #include <netinet/in.h> // sockaddr_in
 #include <stdlib.h>     // strtod
-#include <string.h>     // strstr
+#include <string.h>     // strchr
 #include <errno.h>      // errno
 
 #include <boost/thread.hpp>
@@ -117,7 +117,7 @@ void process(timeframe* what, timeframe* into, char ws, int timeout) {
 
 
 void processkey(char* buf) {
-  char* val = strstr(buf, ":");
+  char* val = strchr(buf, ':');
 
   if (val == 0) {
     cout << "invalid data [" << buf << "]" << endl;
@@ -143,7 +143,7 @@ void processkey(char* buf) {
       c = &(*i).second;
     }
 
-    char* sep    = strstr(val, "|");
+    char* sep    = strchr(val, '|');
     double value = 0;
 
     if (sep != 0) {

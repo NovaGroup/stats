@@ -36,7 +36,7 @@ These are all the available collector implementations sorted by their efficiency
 <table>
 <tr><th>Name</th><th>RSS</th><th>CPU usage</th></tr>
 <tr><td>C</td><td>624KB</td><td>1.2</td></tr>
-<tr><td>C++</td><td>1664KB</td><td>1.3</td></tr>
+<tr><td>C++</td><td>1816KB</td><td>1.4</td></tr>
 <tr><td>libuv</td><td>1796KB</td><td>1.6</td></tr>
 <tr><td>Go</td><td>2896KB</td><td>3.2</td></tr>
 <tr><td>Nodejs</td><td>34MB</td><td>5.8</td></tr>

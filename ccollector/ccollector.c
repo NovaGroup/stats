@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <time.h>
 
 #include <pthread.h>
 
@@ -120,13 +122,26 @@ void* process(void* arg) {
 
       k->data = k->samples = 0;
 
-      char command[1024];
+      char  command[1024];
+      void* reply;
 
       snprintf(command, 1024, "RPUSH %s:%c %.2f", k->name, data->ws, value);
-      freeReplyObject(redisCommand(redis, command));
+      reply = redisCommand(redis, command);
+
+      if (reply == NULL) {
+        printf("error executing redis command: [%s]\n", command);
+      } else {
+        freeReplyObject(reply);
+      }
 
       snprintf(command, 1024, "LTRIM %s:%c -288 -1", k->name, data->ws);
-      freeReplyObject(redisCommand(redis, command));
+      reply = redisCommand(redis, command);
+
+      if (reply == NULL) {
+        printf("error executing redis command: [%s]\n", command);
+      } else {
+        freeReplyObject(reply);
+      }
 
       if (data->into != 0) {
         keyval_t* ki = getkey(data->into, k->name);
@@ -152,7 +167,7 @@ void* process(void* arg) {
 
 
 void processkey(char* buf) {
-  char* val = strstr(buf, ":");
+  char* val = strchr(buf, ':');
 
   if (val == 0) {
     printf("invalid data [%s]\n", buf);
@@ -162,8 +177,6 @@ void processkey(char* buf) {
   *(val++) = 0;
 
 
-  pthread_mutex_lock(&seconds.mutex);
-
   keyval_t* k = getkey(&seconds, buf);
 
   if (k == 0) {
@@ -172,7 +185,7 @@ void processkey(char* buf) {
   }
   
 
-  char* sep    = strstr(val, "|");
+  char* sep    = strchr(val, '|');
   double value = 0;
 
   if (sep != 0) {
@@ -195,8 +208,6 @@ void processkey(char* buf) {
   }
 
   k->data += value;
-  
-  pthread_mutex_unlock(&seconds.mutex);
 }
 
 
@@ -243,6 +254,9 @@ int main() {
   pthread_mutex_init(&hours.mutex  , 0);
 
 
+  pthread_mutex_lock(&seconds.mutex);
+
+
   // It doesn't matter that these are local variables seeing as this function will never return.
   thread_data_t seconds_data = {&seconds, &minutes, 's',       5};
   thread_data_t minutes_data = {&minutes, &hours  , 'm',  5 * 60};
@@ -255,11 +269,27 @@ int main() {
 
 
   for (;;) {
-    l = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr*)&si_other, &slen);
+    l = recvfrom(s, buf, BUFLEN, MSG_DONTWAIT, (struct sockaddr*)&si_other, &slen);
    
     if (l == -1) {
-      printf("recvfrom failed\n");
-      return 4;
+      if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+        struct timespec tim, tim2;
+        tim.tv_sec = 0;
+        tim.tv_nsec = 10000000; // 0.01 second
+
+        pthread_mutex_unlock(&seconds.mutex);
+
+        if (nanosleep(&tim , &tim2) < 0 ) {
+          printf("nanosleep failed\n");
+        }
+
+        pthread_mutex_lock(&seconds.mutex);
+
+        continue;
+      } else {
+        printf("recvfrom failed\n");
+        return 4;
+      }
     }
 
     buf[l] = 0; // recvfrom doesn't zero terminate
