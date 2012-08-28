@@ -4,6 +4,7 @@ var http   = require('http');
 var os     = require('os');
 var fs     = require('fs');
 var dns    = require('dns');
+var net    = require('net');
 var stats  = require(process.cwd() + '/statsapi.js');
 var config = require(process.cwd() + '/config.js');
 
@@ -95,6 +96,41 @@ if (config.php) { !function() {
         });
       });
     }).end();
+  }, 1000);
+}(); }
+
+
+
+
+// Collect redis stats
+if (config.redis) { !function() {
+  setInterval(function() {
+    var client;
+
+    if (config.redis.sock) {
+      client = net.createConnection(config.redis.sock);
+    } else {
+      client = net.createConnection(config.redis.port, config.redis.host);
+    }
+
+    client.write('*1\r\n$4\r\ninfo\r\n');
+
+    client.on('data', function(data) {
+      data = data.toString('ascii');
+      data = data.split('\n');
+
+      for (var i = 0; i < data.length; ++i) {
+        if (data[i].indexOf('total_commands_processed:') == 0) {
+          sendDataPoints({
+            'redis.commands': data[i].substr(25) // 25 = strlen('total_commands_processed:')
+          });
+
+          break;
+        }
+      }
+
+      client.end();
+    });
   }, 1000);
 }(); }
 
